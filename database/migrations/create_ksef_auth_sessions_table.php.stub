@@ -1,0 +1,29 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('ksef_auth_sessions', function (Blueprint $table) {
+            $table->id();
+            $table->string('nip');
+            $table->string('environment');
+            $table->text('access_token');
+            $table->timestamp('access_token_valid_until');
+            $table->text('refresh_token');
+            $table->timestamp('refresh_token_valid_until');
+            $table->timestamps();
+
+            $table->unique(['nip', 'environment']);
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('ksef_auth_sessions');
+    }
+};

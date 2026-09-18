@@ -1,93 +1,140 @@
-# :package_description
+# Laravel KSeF
 
-[![Latest Version on Packagist](https://img.shields.io/packagist/v/:vendor_slug/:package_slug.svg?style=flat-square)](https://packagist.org/packages/:vendor_slug/:package_slug)
-[![GitHub Tests Action Status](https://github.com/spatie/package-skeleton-laravel/actions/workflows/run-tests.yml/badge.svg)](https://github.com/:vendor_slug/:package_slug/actions?query=workflow%3Arun-tests+branch%3Amain)
-[![GitHub Code Style Action Status](https://github.com/spatie/package-skeleton-laravel/actions/workflows/fix-php-code-style-issues.yml/badge.svg)](https://github.com/:vendor_slug/:package_slug/actions?query=workflow%3A"Fix+PHP+code+style+issues"+branch%3Amain)
-[![Total Downloads](https://img.shields.io/packagist/dt/:vendor_slug/:package_slug.svg?style=flat-square)](https://packagist.org/packages/:vendor_slug/:package_slug)
-<!--delete-->
----
-This repo can be used to scaffold a Laravel package. Follow these steps to get started:
+[![Tests](https://github.com/adam-dziuk/laravel-ksef/actions/workflows/run-tests.yml/badge.svg)](https://github.com/adam-dziuk/laravel-ksef/actions/workflows/run-tests.yml)
+[![Code Style](https://github.com/adam-dziuk/laravel-ksef/actions/workflows/fix-php-code-style-issues.yml/badge.svg)](https://github.com/adam-dziuk/laravel-ksef/actions/workflows/fix-php-code-style-issues.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
 
-1. Press the "Use this template" button at the top of this repo to create a new repo with the contents of this skeleton.
-2. Run "php ./configure.php" to run a script that will replace all placeholders throughout all the files.
+A Laravel package for integrating with **KSeF 2.0** (Krajowy System e-Faktur) — Poland's national e-invoicing system. It wraps the official KSeF REST API with typed, single-purpose Actions (authentication, sending invoices, querying/downloading invoices) plus a convenience facade, so you don't have to hand-roll the HTTP calls, encryption, or token lifecycle yourself.
 
-   To run it unattended — from a script, or by handing it to a coding agent — pass `--no-interaction`
-   (`-n`) and the answers as options. It never prompts, and exits non-zero with a message naming any
-   option it still needs:
+> **Status:** early-stage MVP. It covers KSeF-token authentication and the interactive (single-invoice) sending session. Certificate/XAdES authentication, batch sessions, and invoice XML generation are not implemented yet — see [Roadmap](#roadmap).
 
-   ```bash
-   php ./configure.php -n --vendor-name="Spatie" --package-name="laravel-ray"
-   ```
+## Requirements
 
-   Run "php ./configure.php --help" for the full list of options.
-3. Have fun creating your package.
-4. If you need help creating a package, consider picking up our <a href="https://laravelpackage.training">Laravel Package Training</a> video course.
----
-<!--/delete-->
-This is where your description should go. Limit it to a paragraph or two. Consider adding a small example.
-
-## Support us
-
-[<img src="https://github-ads.s3.eu-central-1.amazonaws.com/:package_name.jpg?t=1" width="419px" />](https://spatie.be/github-ad-click/:package_name)
-
-We invest a lot of resources into creating [best in class open source packages](https://spatie.be/open-source). You can support us by [buying one of our paid products](https://spatie.be/open-source/support-us).
-
-We highly appreciate you sending us a postcard from your hometown, mentioning which of our package(s) you are using. You'll find our address on [our contact page](https://spatie.be/about-us). We publish all received postcards on [our virtual postcard wall](https://spatie.be/open-source/postcards).
+- PHP 8.3+
+- Laravel 12.x or 13.x
+- `ext-openssl`
+- A KSeF token, generated from the [KSeF test/demo/production portal](https://ksef.mf.gov.pl) for the NIP you want to integrate
 
 ## Installation
 
-You can install the package via composer:
+Install the package via composer:
 
 ```bash
-composer require :vendor_slug/:package_slug
+composer require adam-dziuk/laravel-ksef
 ```
 
-You can publish and run the migrations with:
+Publish the config file:
 
 ```bash
-php artisan vendor:publish --tag=":package_slug-migrations"
+php artisan vendor:publish --tag="laravel-ksef-config"
+```
+
+Publish and run the migration (creates the `ksef_auth_sessions` table, used to persist access/refresh tokens per NIP and environment):
+
+```bash
+php artisan vendor:publish --tag="laravel-ksef-migrations"
 php artisan migrate
 ```
 
-You can publish the config file with:
+## Configuration
 
-```bash
-php artisan vendor:publish --tag=":package_slug-config"
+Set these in your `.env`:
+
+```
+KSEF_ENVIRONMENT=test   # test | demo | production
+KSEF_NIP=5265877635
+KSEF_TOKEN=your-ksef-token
 ```
 
-This is the contents of the published config file:
-
-```php
-return [
-];
-```
-
-Optionally, you can publish the views using
-
-```bash
-php artisan vendor:publish --tag=":package_slug-views"
-```
+`KSEF_ENVIRONMENT` picks which KSeF API to talk to — always use `test` while developing. See `config/ksef.php` for HTTP timeouts, retry behaviour, and the invoice form code (defaults to FA(3)).
 
 ## Usage
 
+### Quick start: the `Ksef` facade
+
+The facade handles authentication for you — it reuses a persisted session, transparently refreshes an expired access token, and only logs in from scratch when it has to.
+
 ```php
-$:variable = new VendorName\Skeleton();
-echo $:variable->echoPhrase('Hello, VendorName!');
+use AdamDziuk\LaravelKsef\Facades\Ksef;
+
+// Sends a single invoice: opens an online session, sends the invoice, closes the session.
+$result = Ksef::sendInvoice($invoiceXml);
+// ['referenceNumber' => '...', 'sessionReferenceNumber' => '...']
+
+Ksef::invoiceStatus($result['sessionReferenceNumber'], $result['referenceNumber']);
+Ksef::sessionStatus($result['sessionReferenceNumber']);
+
+Ksef::downloadInvoice($ksefNumber);
+
+Ksef::queryInvoices([
+    'subjectType' => 'Subject1',
+    'dateRange' => [
+        'dateType' => 'PermanentStorage',
+        'from' => now()->subMonth()->toIso8601String(),
+        'to' => now()->toIso8601String(),
+    ],
+]);
 ```
+
+By default the facade uses `KSEF_NIP` from config; pass a NIP explicitly as the last argument (e.g. `Ksef::sendInvoice($xml, $nip)`) if your app handles multiple contexts.
+
+### Advanced: composing Actions directly
+
+`Ksef::sendInvoice()` opens and closes a session around a single invoice. To send several invoices within the same session, compose the underlying Actions yourself:
+
+```php
+use AdamDziuk\LaravelKsef\Actions\Sessions\{OpenOnlineSession, SendInvoice, CloseOnlineSession};
+use AdamDziuk\LaravelKsef\Facades\Ksef;
+
+$client = Ksef::authenticate();
+
+$session = (new OpenOnlineSession($client))->handle();
+
+foreach ($invoices as $invoiceXml) {
+    (new SendInvoice($client))->handle($session['referenceNumber'], $invoiceXml, $session['symmetricKey']);
+}
+
+(new CloseOnlineSession($client))->handle($session['referenceNumber']);
+```
+
+Every KSeF operation is available as its own Action under `AdamDziuk\LaravelKsef\Actions\{Auth,Sessions,Invoices,Security}`, each with a single `handle()` method — see the source for the full list.
+
+## How authentication works
+
+`Ksef::authenticate()` (used internally by every other facade method):
+
+1. Looks for a valid, persisted `KsefAuthSession` for the given NIP + environment.
+2. If the access token is still valid, reuses it as-is.
+3. If it expired but the refresh token hasn't, silently refreshes it.
+4. Otherwise, runs the full KSeF-token login flow (challenge → encrypt token with the Ministry's public key → poll authentication status → redeem access/refresh tokens) and persists the result.
 
 ## Testing
 
 ```bash
 composer test
+composer analyse
+composer format
 ```
+
+## Roadmap
+
+- [x] KSeF-token authentication (challenge, encrypted token, status polling, access/refresh tokens)
+- [x] Persisted auth sessions with automatic access token refresh
+- [x] Interactive (online) sending session — open, send invoice, close
+- [x] Invoice status & session status lookups
+- [x] Invoice metadata query & download
+- [x] Convenience `Ksef` facade
+- [ ] Batch sending sessions (ZIP-packaged, multi-part upload)
+- [ ] Certificate / XAdES authentication
+- [ ] FA(3) invoice XML generation (this package expects a ready-made XML string)
+- [ ] QR code generation
+- [ ] Permissions management
+
+Contributions towards the unchecked items are welcome.
 
 ## Changelog
 
 Please see [CHANGELOG](CHANGELOG.md) for more information on what has changed recently.
-
-## Contributing
-
-Please see [CONTRIBUTING](CONTRIBUTING.md) for details.
 
 ## Security Vulnerabilities
 
@@ -95,7 +142,7 @@ Please review [our security policy](../../security/policy) on how to report secu
 
 ## Credits
 
-- [:author_name](https://github.com/:author_username)
+- [Adam Dziuk](https://github.com/adam-dziuk)
 - [All Contributors](../../contributors)
 
 ## License
