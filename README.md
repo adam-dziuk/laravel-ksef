@@ -15,7 +15,7 @@ A Laravel package for integrating with **KSeF 2.0** (Krajowy System e-Faktur) â€
 - `ext-openssl`
 - A KSeF token, generated from the [KSeF test/demo/production portal](https://ksef.mf.gov.pl) for the NIP you want to integrate
 
-## Installation
+## Installation (not available for now)
 
 Install the package via composer:
 
